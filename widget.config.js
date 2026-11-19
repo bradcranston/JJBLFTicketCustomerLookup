@@ -1,7 +1,7 @@
 module.exports = {
-  widgetName: "jsDev",
+  widgetName: "LFTicketCustomerLookup",
   server: "$",
-  file: "jsDev",
+  file: "Operations_Sandbox",
   uploadScript: "UploadToHTML",
   reloadScript: "Load Widget",
   startDevScript: "Set to Dev Mode",
