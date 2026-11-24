@@ -12,16 +12,54 @@ class CustomerLookup {
     try {
       this.setupEventListeners();
       this.showWaitingForData();
+      this.requestDataWhenReady();
     } catch (error) {
       console.error('Failed to initialize application:', error);
       this.showError('Failed to initialize application');
     }
   }
 
+  // Ask FileMaker for the customer list once this page is loaded and the
+  // FileMaker bridge object exists. FileMaker injects window.FileMaker shortly
+  // after load, so poll for it briefly. Replaces the old fixed-pause push from
+  // FileMaker, which raced the page load and left "Waiting for data".
+  requestDataWhenReady() {
+    const started = Date.now();
+    const tryRequest = () => {
+      if (window.FileMaker && window.FileMaker.PerformScript) {
+        window.FileMaker.PerformScript(
+          'Manage: Ticket - Landfill',
+          JSON.stringify({ mode: 'findCustomerData' })
+        );
+        return;
+      }
+      if (Date.now() - started < 5000) {
+        setTimeout(tryRequest, 50);
+      } else {
+        console.warn('FileMaker bridge not available; cannot request customer data.');
+      }
+    };
+    tryRequest();
+  }
+
   loadCustomerData(jsonData) {
     try {
+      // OData returns {"error":{code,message}} on auth/privilege/query failures.
+      // Surface it instead of silently showing an empty list.
+      if (jsonData && !Array.isArray(jsonData) && jsonData.error) {
+        const err = jsonData.error;
+        this.data = [];
+        this.filteredData = [];
+        this.showError(`Could not load customers (OData ${err.code || ''}): ${err.message || JSON.stringify(err)}`);
+        return;
+      }
+
       // Handle both direct array and OData response format
       this.data = Array.isArray(jsonData) ? jsonData : (jsonData.value || []);
+      if (this.data.length === 0) {
+        this.showError('Customer list came back empty from FileMaker (0 sites).');
+        return;
+      }
       this.filteredData = [...this.data];
       
       // Sort initially by CustomerNumber
@@ -78,6 +116,7 @@ class CustomerLookup {
   }
 
   handleSearch(searchTerm) {
+    if (this.data.length === 0) return; // keep the load error / waiting message visible
     const term = searchTerm.toLowerCase().trim();
     
     if (!term) {
@@ -294,11 +333,7 @@ class CustomerLookup {
 // Initialize the application when the DOM is loaded
 let customerLookupApp;
 
-document.addEventListener('DOMContentLoaded', () => {
-  customerLookupApp = new CustomerLookup();
-});
-
-// Also initialize if DOMContentLoaded has already fired
+// Initialize exactly once (a second instance would request the data twice)
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     customerLookupApp = new CustomerLookup();
@@ -312,7 +347,10 @@ window.loadCustomerData = function(jsonData) {
   try {
     console.log('Received customer data from FileMaker');
     
-    // Parse JSON string if needed
+    // Parse JSON string if needed (empty string = Insert from URL failed, e.g. SSL/connection error)
+    if (typeof jsonData === 'string' && jsonData.trim() === '') {
+      throw new Error('No response from the OData request (connection or SSL failure).');
+    }
     const data = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
     
     if (customerLookupApp) {
@@ -330,7 +368,7 @@ window.loadCustomerData = function(jsonData) {
   } catch (error) {
     console.error('Error loading customer data:', error);
     if (customerLookupApp) {
-      customerLookupApp.showError('Invalid data format received from FileMaker');
+      customerLookupApp.showError('Could not load customers: ' + (error && error.message ? error.message : 'invalid data from FileMaker'));
     }
   }
 };

@@ -9,3 +9,4 @@ import.log
 Recover.log
 .env
 .env.*
+fm-script-*.xml
